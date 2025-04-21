@@ -6,21 +6,34 @@
 //
 
 import SwiftUI
+import Combine
+
+enum PostType {
+    case image
+    case text
+}
 
 struct ContentCard: View {
     let username: String?
-    let color: Color
+    let imageName: String
     
-    init(username: String? = nil, color: Color? = nil) {
+    private static let availableImages = ["michelle", "nyc", "twombly"]
+    
+    init(username: String? = nil, imageName: String? = nil) {
         self.username = username
-        self.color = color ?? Color(red: Double.random(in: 0...1), 
-                                   green: Double.random(in: 0...1), 
-                                   blue: Double.random(in: 0...1))
+        self.imageName = imageName ?? ContentCard.getRandomImageName()
+    }
+    
+    private static func getRandomImageName() -> String {
+        return availableImages.randomElement() ?? "michelle"
     }
     
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            color.frame(height: 120)
+            Image(imageName)
+                .resizable()
+                .aspectRatio(contentMode: .fill)
+                .frame(height: 120)
                 .clipShape(RoundedRectangle(cornerRadius: 12))
             
             if let username = username {
@@ -39,6 +52,77 @@ struct ContentCard: View {
             }
         }
     }
+}
+
+struct TextPostCard: View {
+    let username: String
+    let content: String
+    let severity: Int
+	
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Circle()
+                    .fill(Color.gray.opacity(0.5))
+                    .frame(width: 28, height: 28)
+                
+                Text(username)
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+					.foregroundColor(.black)
+                
+                Spacer()
+                
+                HStack(spacing: 2) {
+                    Text("\(severity)")
+                        .font(.caption)
+                        .fontWeight(.bold)
+                    
+                    Text("/100")
+                        .font(.caption)
+						.foregroundColor(.purple)
+                }
+            }
+            
+            Text(content)
+                .font(.body)
+				.foregroundColor(.green)
+                .multilineTextAlignment(.leading)
+                .lineLimit(6)
+                .padding(.vertical, 4)
+            
+            HStack(spacing: 16) {
+                Button(action: {}) {
+                    Image(systemName: "heart")
+                        .font(.caption)
+                        .foregroundColor(.gray)
+                }
+                
+                Button(action: {}) {
+                    Image(systemName: "bubble.right")
+                        .font(.caption)
+                        .foregroundColor(.gray)
+                }
+                
+                Button(action: {}) {
+                    Image(systemName: "arrowshape.turn.up.right")
+                        .font(.caption)
+                        .foregroundColor(.gray)
+                }
+                
+                Spacer()
+            }
+            .padding(.top, 4)
+        }
+        .padding(16)
+        .background(Color.white)
+        .cornerRadius(12)
+    }
+	
+	func test(){
+		
+	}
 }
 
 struct TabButton: View {
@@ -64,7 +148,18 @@ struct TabButton: View {
 
 struct SilkTestView: View {
     @State private var selectedTab = 0
+    @State private var textPosts: [SinResponse] = []
+    @State private var isLoading = false
+    @State private var errorMessage: String? = nil
     let tabs = ["Following", "Staff Picks", "Recent"]
+    
+    private let possiblePrompts = [
+        "I stole some artwork",
+        "I lied to my friend",
+        "I cheated on my exam",
+        "I skipped church on Sunday",
+        "I had impure thoughts"
+    ]
     
     var body: some View {
         ZStack {
@@ -111,18 +206,55 @@ struct SilkTestView: View {
                 
                 // Content grid
                 ScrollView {
-                    LazyVGrid(columns: [
-                        GridItem(.flexible(), spacing: 12),
-                        GridItem(.flexible(), spacing: 12)
-                    ], spacing: 16) {
-                        ContentCard(username: "wali", color: .orange)
-                        ContentCard(username: nil)
-                        ContentCard(username: "novia")
-                        ContentCard(username: "1wiccadelic1")
-                        ContentCard(username: "novia")
-                        ContentCard(username: "novia")
+                    if isLoading && textPosts.isEmpty {
+                        ProgressView()
+                            .frame(maxWidth: .infinity, minHeight: 100)
+                            .padding()
+                    } else if let error = errorMessage, textPosts.isEmpty {
+                        Text(error)
+                            .foregroundColor(.red)
+                            .padding()
+                    } else {
+                        LazyVGrid(columns: [
+                            GridItem(.flexible(), spacing: 12),
+                            GridItem(.flexible(), spacing: 12)
+                        ], spacing: 16) {
+                            // First row: Text post spanning full width
+                            if !textPosts.isEmpty {
+                                TextPostCard(username: "father_confessor", 
+                                            content: textPosts[0].sinResponse, 
+                                            severity: textPosts[0].sinSeverity)
+                                    .gridCellColumns(2)
+                            }
+                            
+                            // Image cards
+                            ContentCard(username: "wali", imageName: "michelle")
+                            ContentCard(username: nil)
+                            
+                            // Another text post if available
+                            if textPosts.count > 1 {
+                                TextPostCard(username: "priest_john", 
+                                            content: textPosts[1].sinResponse, 
+                                            severity: textPosts[1].sinSeverity)
+                                    .gridCellColumns(2)
+                            }
+                            
+                            ContentCard(username: "novia")
+                            ContentCard(username: "1wiccadelic1")
+                            
+                            // Another text post if available
+                            if textPosts.count > 2 {
+                                TextPostCard(username: "cardinal_smith", 
+                                            content: textPosts[2].penance, 
+                                            severity: textPosts[2].sinSeverity)
+                                    .gridCellColumns(2)
+                            }
+                            
+                            ContentCard(username: "novia")
+                            ContentCard(username: "novia")
+                        }
+                        .padding()
                     }
-                    .padding()
                 }
                 
                 // Bottom navigation
@@ -144,6 +276,38 @@ struct SilkTestView: View {
         }
         .statusBar(hidden: false)
         .preferredColorScheme(.dark)
+        .onAppear {
+            Task {
+                await fetchTextPosts()
+            }
+        }
+    }
+    
+    private func fetchTextPosts() async {
+        isLoading = true
+        errorMessage = nil
+        textPosts = []
+        
+        // Attempt to fetch 3 posts
+        for _ in 0..<3 {
+            do {
+                if let randomPrompt = possiblePrompts.randomElement() {
+                    let response = try await SinService.shared.fetchSinResponse(with: randomPrompt)
+                    DispatchQueue.main.async {
+                        textPosts.append(response)
+                    }
+                }
+            } catch {
+                DispatchQueue.main.async {
+                    errorMessage = "Failed to load posts: \(error.localizedDescription)"
+                }
+                break
+            }
+        }
+        
+        DispatchQueue.main.async {
+            isLoading = false
+        }
     }
 }
 
